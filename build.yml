@@ -1,0 +1,2006 @@
+name: Build Seel APK
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ─────────────────────────────────────────
+      # 1. PROJECT ROOT FILES
+      # ─────────────────────────────────────────
+
+      - name: Create settings.gradle.kts
+        run: |
+          cat > settings.gradle.kts << 'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+                  maven { url = uri("https://jitpack.io") }
+              }
+          }
+          rootProject.name = "seel"
+          include(":app")
+          EOF
+
+      - name: Create root build.gradle.kts
+        run: |
+          cat > build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application") version "8.2.2" apply false
+              id("com.android.library") version "8.2.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+          }
+          EOF
+
+      - name: Create gradle.properties
+        run: |
+          cat > gradle.properties << 'EOF'
+          org.gradle.jvmargs=-Xmx4096m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.enableJetifier=true
+          kotlin.code.style=official
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          EOF
+
+      - name: Set up Gradle wrapper
+        run: |
+          mkdir -p gradle/wrapper
+          cat > gradle/wrapper/gradle-wrapper.properties << 'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.4-bin.zip
+          networkTimeout=10000
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
+
+      - name: Download Gradle wrapper jar
+        run: |
+          mkdir -p gradle/wrapper
+          curl -fsSL -o gradle/wrapper/gradle-wrapper.jar \
+            "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar" || \
+          wget -q -O gradle/wrapper/gradle-wrapper.jar \
+            "https://raw.githubusercontent.com/gradle/gradle/v8.4.0/gradle/wrapper/gradle-wrapper.jar"
+
+      - name: Create gradlew script
+        run: |
+          cat > gradlew << 'GRADLEW'
+          #!/bin/sh
+          APP_HOME="$(cd "$(dirname "$0")" && pwd -P)"
+          exec "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@" 2>/dev/null || \
+          java -classpath "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
+            org.gradle.wrapper.GradleWrapperMain "$@"
+          GRADLEW
+
+          # Use the proper gradlew generation approach
+          cat > gradlew << 'GRADLEW'
+          #!/usr/bin/env sh
+          ##############################################################################
+          ## Gradle start up script for UN*X
+          ##############################################################################
+          APP_HOME=$( cd "${APP_HOME:-./}" && pwd -P ) || exit
+          APP_NAME="Gradle"
+          APP_BASE_NAME=${0##*/}
+          DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+          CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+          exec "$JAVACMD" "$@" -classpath "$CLASSPATH" \
+            org.gradle.wrapper.GradleWrapperMain "$APP_ARGS"
+          GRADLEW
+          chmod +x gradlew
+
+      - name: Install Gradle wrapper properly
+        run: |
+          # Use the gradle wrapper plugin to generate proper gradlew
+          cat > gradlew << 'EOF'
+          #!/usr/bin/env sh
+          #
+          # Copyright 2015 the original author or authors.
+          #
+          # Licensed under the Apache License, Version 2.0 (the "License");
+          # you may not use this file except in compliance with the License.
+          # You may obtain a copy of the License at
+          #
+          #      https://www.apache.org/licenses/LICENSE-2.0
+          #
+          # Unless required by applicable law or agreed to in writing, software
+          # distributed under the License is distributed on an "AS IS" BASIS,
+          # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+          # See the License for the specific language governing permissions and
+          # limitations under the License.
+          #
+
+          ##############################################################################
+          ##
+          ##  Gradle start up script for UN*X
+          ##
+          ##############################################################################
+
+          # Attempt to set APP_HOME
+          # Resolve links: $0 may be a link
+          app_path=$0
+
+          # Need this for daisy-chained symlinks.
+          while
+              APP_HOME=${app_path%"${app_path##*/}"}  # leaves a trailing /; empty if no leading path
+              [ -h "$app_path" ]
+          do
+              ls=$( ls -ld "$app_path" )
+              link=${ls#*' -> '}
+              case $link in             #(
+                /*)   app_path=$link ;; #( absolute
+                *)    app_path=$APP_HOME$link ;;
+              esac
+          done
+
+          APP_HOME=$( cd "${APP_HOME:-./}" && pwd -P ) || exit
+
+          APP_NAME="Gradle"
+          APP_BASE_NAME=${0##*/}
+
+          # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+          DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+
+          # Use the maximum available, or set MAX_FD != -1 to use that value.
+          MAX_FD=maximum
+
+          warn () {
+              echo "$*"
+          } >&2
+
+          die () {
+              echo
+              echo "$*"
+              echo
+              exit 1
+          } >&2
+
+          # OS specific support (must be 'true' or 'false').
+          cygwin=false
+          msys=false
+          darwin=false
+          nonstop=false
+          case "$( uname )" in                #(
+            CYGWIN* )         cygwin=true  ;; #(
+            Darwin* )         darwin=true  ;; #(
+            MSYS* | MINGW* )  msys=true    ;; #(
+            NONSTOP* )        nonstop=true ;;
+          esac
+
+          CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+
+
+          # Determine the Java command to use to start the JVM.
+          if [ -n "$JAVA_HOME" ] ; then
+              if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
+                  # IBM's JDK on AIX uses strange locations for the executables
+                  JAVACMD=$JAVA_HOME/jre/sh/java
+              else
+                  JAVACMD=$JAVA_HOME/bin/java
+              fi
+              if [ ! -x "$JAVACMD" ] ; then
+                  die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
+
+          Please set the JAVA_HOME variable in your environment to match the
+          location of your Java installation."
+              fi
+          else
+              JAVACMD=java
+              if ! command -v java >/dev/null 2>&1
+              then
+                  die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+
+          Please set the JAVA_HOME variable in your environment to match the
+          location of your Java installation."
+              fi
+          fi
+
+          # Increase the maximum file descriptors if we can.
+          if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
+              case $MAX_FD in #(
+                max*)
+                  # In POSIX sh, ulimit -H is undefined. That's why the result is checked to see if it worked.
+                  # shellcheck disable=SC2039,SC3045
+                  MAX_FD=$( ulimit -H -n ) ||
+                      warn "Could not query maximum file descriptor limit"
+              esac
+              case $MAX_FD in  #(
+                '' | soft) :;; #(
+                *)
+                  # In POSIX sh, ulimit -n is undefined. That's why the result is checked to see if it worked.
+                  # shellcheck disable=SC2039,SC3045
+                  ulimit -n "$MAX_FD" ||
+                      warn "Could not set maximum file descriptor limit to $MAX_FD"
+              esac
+          fi
+
+          # Collect all arguments for the java command, stacking in reverse order:
+          #   * args from the command line
+          #   * the main class name
+          #   * -classpath
+          #   * -D...appname settings
+          #   * --module-path (only if needed)
+          #   * DEFAULT_JVM_OPTS, JAVA_OPTS, and GRADLE_OPTS environment variables.
+
+          # For Cygwin or MSYS, switch paths to Windows format before running java
+          if "$cygwin" || "$msys" ; then
+              APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
+              CLASSPATH=$( cygpath --path --mixed "$CLASSPATH" )
+
+              JAVACMD=$( cygpath --unix "$JAVACMD" )
+
+              # Now convert the arguments - kludge to limit ourselves to /bin/sh
+              for arg do
+                  if
+                      case $arg in                                #(
+                        -*)   false ;;                            # don't mess with options  #(
+                        /?*)  t=${arg#/} t=/${t%%/*}             # looks like a POSIX filepath
+                              [ -e "$t" ] ;;                     #(
+                        *)    false ;;
+                      esac
+                  then
+                      arg=$( cygpath --path --ignore --mixed "$arg" )
+                  fi
+                  # Roll the args list around exactly as many times as the number of
+                  # temporary variables.  (GPG is too slow for this hack.)
+                  # shellcheck disable=SC2043
+                  for i do
+                      shift
+                      set -- "$@" "$i"
+                  done
+                  set -- "$@" "$arg"
+              done
+          fi
+
+          # Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+          set -- \
+                  "-Dorg.gradle.appname=$APP_BASE_NAME" \
+                  -classpath "$CLASSPATH" \
+                  org.gradle.wrapper.GradleWrapperMain \
+                  "$@"
+
+          # Stop when "xargs" is not available.
+          if ! command -v xargs >/dev/null 2>&1
+          then
+              die "xargs is not available"
+          fi
+
+          # Use "xargs" to parse quoted args.
+          #
+          # With -n1 it outputs one arg per line, with the quotes and backslashes removed.
+          #
+          # In Bash we could simply go:
+          #
+          #   readarray ARGS < <( xargs -n1 <<<"$var" ) &&
+          #   set -- "${ARGS[@]}" "$@"
+          #
+          # but POSIX shell has neither arrays nor command substitution, so instead we
+          # post-process each arg (as a line of input to sed) to backslash-escape any
+          # character that might be a shell metacharacter, then use eval/set to
+          # recreate the arg list.
+
+          eval "set -- $(
+                  printf '%s\n' "$DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS" |
+                  xargs -n1 |
+                  sed ' s~[^a-zA-Z0-9/=@._-]~\\&~g; ' |
+                  tr '\n' ' '
+                )" '"$@"'
+
+          exec "$JAVACMD" "$@"
+          EOF
+          chmod +x gradlew
+
+      # ─────────────────────────────────────────
+      # 2. APP MODULE STRUCTURE
+      # ─────────────────────────────────────────
+
+      - name: Create directory structure
+        run: |
+          mkdir -p app/src/main/java/com/example/seel/ui/screens
+          mkdir -p app/src/main/java/com/example/seel/ui/theme
+          mkdir -p app/src/main/java/com/example/seel/ui/components
+          mkdir -p app/src/main/java/com/example/seel/data
+          mkdir -p app/src/main/java/com/example/seel/viewmodel
+          mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
+          mkdir -p app/src/test/java/com/example/seel
+          mkdir -p app/src/androidTest/java/com/example/seel
+
+      - name: Create SeelApplication.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/SeelApplication.kt << 'EOF'
+          package com.example.seel
+
+          import android.app.Application
+          import android.util.Log
+          import com.yausername.youtubedl_android.YoutubeDL
+
+          class SeelApplication : Application() {
+              override fun onCreate() {
+                  super.onCreate()
+                  try {
+                      YoutubeDL.getInstance().init(this)
+                      Log.d("Seel", "YoutubeDL initialized successfully")
+                  } catch (e: Exception) {
+                      Log.e("Seel", "YoutubeDL init failed: ${e.message}", e)
+                  }
+              }
+          }
+          EOF
+
+      - name: Create app/build.gradle.kts
+        run: |
+          cat > app/build.gradle.kts << 'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.example.seel"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.example.seel"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+                  testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+                  vectorDrawables { useSupportLibrary = true }
+              }
+
+              buildTypes {
+                  release {
+                      isMinifyEnabled = false
+                      proguardFiles(
+                          getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro"
+                      )
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions { jvmTarget = "17" }
+
+              buildFeatures { compose = true }
+
+              composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
+
+              packaging {
+                  resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+              }
+          }
+
+          dependencies {
+              val composeBom = platform("androidx.compose:compose-bom:2024.02.00")
+              implementation(composeBom)
+              androidTestImplementation(composeBom)
+
+              implementation("androidx.core:core-ktx:1.12.0")
+              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+              implementation("androidx.activity:activity-compose:1.8.2")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-graphics")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-extended")
+              implementation("androidx.navigation:navigation-compose:2.7.6")
+              implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+              // YoutubeDL Android
+              implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+              implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
+
+              // Lifecycle Compose (collectAsStateWithLifecycle)
+              implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
+
+              // ML Kit Text Recognition (OCR)
+              implementation("com.google.mlkit:text-recognition:16.0.0")
+
+              // Coroutines Play Services bridge (await() on ML Kit Tasks)
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+
+              testImplementation("junit:junit:4.13.2")
+              androidTestImplementation("androidx.test.ext:junit:1.1.5")
+              androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+              androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+              debugImplementation("androidx.compose.ui:ui-tooling")
+              debugImplementation("androidx.compose.ui:ui-test-manifest")
+          }
+          EOF
+
+      - name: Create proguard-rules.pro
+        run: |
+          cat > app/proguard-rules.pro << 'EOF'
+          # Add project specific ProGuard rules here.
+          -keep class com.yausername.** { *; }
+          -keep class com.arthenica.** { *; }
+          EOF
+
+      # ─────────────────────────────────────────
+      # 3. ANDROID MANIFEST
+      # ─────────────────────────────────────────
+
+      - name: Create AndroidManifest.xml
+        run: |
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="32" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                  android:maxSdkVersion="29" />
+              <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+              <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+              <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+              <uses-permission android:name="android.permission.CAMERA" />
+
+              <application
+                  android:name=".SeelApplication"
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="@string/app_name"
+                  android:roundIcon="@mipmap/ic_launcher_round"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.Seel"
+                  android:requestLegacyExternalStorage="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:theme="@style/Theme.Seel">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+              </application>
+
+          </manifest>
+          EOF
+
+      # ─────────────────────────────────────────
+      # 4. RESOURCES
+      # ─────────────────────────────────────────
+
+      - name: Create strings.xml
+        run: |
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">seel</string>
+          </resources>
+          EOF
+
+      - name: Create themes.xml
+        run: |
+          cat > app/src/main/res/values/themes.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="Theme.Seel" parent="Theme.AppCompat.Light.NoActionBar">
+                  <item name="android:statusBarColor">@android:color/transparent</item>
+                  <item name="android:navigationBarColor">@android:color/transparent</item>
+                  <item name="android:windowBackground">@android:color/black</item>
+              </style>
+          </resources>
+          EOF
+
+      - name: Create launcher icons (vector XML)
+        run: |
+          cat > app/src/main/res/drawable/ic_launcher_background.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android">
+              <solid android:color="#0F2027"/>
+          </shape>
+          EOF
+
+          cat > app/src/main/res/drawable/ic_launcher_foreground.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M54,30 C40.7,30 30,40.7 30,54 C30,67.3 40.7,78 54,78 C67.3,78 78,67.3 78,54 C78,40.7 67.3,30 54,30 Z M54,70 C45.2,70 38,62.8 38,54 C38,45.2 45.2,38 54,38 C62.8,38 70,45.2 70,54 C70,62.8 62.8,70 54,70 Z"/>
+              <path
+                  android:fillColor="#4FC3F7"
+                  android:pathData="M54,44 L46,58 L62,58 Z"/>
+          </vector>
+          EOF
+
+          # Create adaptive icon XMLs for all mipmap dirs
+          for dir in mipmap-hdpi mipmap-mdpi mipmap-xhdpi mipmap-xxhdpi mipmap-xxxhdpi; do
+            cat > app/src/main/res/${dir}/ic_launcher.xml << 'ICONEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background"/>
+              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+          </adaptive-icon>
+          ICONEOF
+            cat > app/src/main/res/${dir}/ic_launcher_round.xml << 'ICONEOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@drawable/ic_launcher_background"/>
+              <foreground android:drawable="@drawable/ic_launcher_foreground"/>
+          </adaptive-icon>
+          ICONEOF
+          done
+
+      # ─────────────────────────────────────────
+      # 5. KOTLIN SOURCE FILES
+      # ─────────────────────────────────────────
+
+      - name: Create Theme.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/theme/Theme.kt << 'EOF'
+          package com.example.seel.ui.theme
+
+          import androidx.compose.material3.MaterialTheme
+          import androidx.compose.material3.darkColorScheme
+          import androidx.compose.runtime.Composable
+          import androidx.compose.ui.graphics.Color
+
+          val Navy0 = Color(0xFF0F2027)
+          val Navy1 = Color(0xFF203A43)
+          val Navy2 = Color(0xFF2C5364)
+          val AccentBlue = Color(0xFF4FC3F7)
+          val AccentTeal = Color(0xFF26C6DA)
+          val GlassWhite = Color(0x26FFFFFF)
+          val GlassBorder = Color(0x40FFFFFF)
+          val TextPrimary = Color(0xFFFFFFFF)
+          val TextSecondary = Color(0xB3FFFFFF)
+
+          private val SeelColorScheme = darkColorScheme(
+              primary = AccentBlue,
+              secondary = AccentTeal,
+              tertiary = Navy2,
+              background = Navy0,
+              surface = GlassWhite,
+              onPrimary = Color.White,
+              onSecondary = Color.White,
+              onBackground = TextPrimary,
+              onSurface = TextPrimary,
+          )
+
+          @Composable
+          fun SeelTheme(content: @Composable () -> Unit) {
+              MaterialTheme(
+                  colorScheme = SeelColorScheme,
+                  content = content
+              )
+          }
+          EOF
+
+      - name: Create GradientBackground.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/components/GradientBackground.kt << 'EOF'
+          package com.example.seel.ui.components
+
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.Box
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.runtime.Composable
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Brush
+          import com.example.seel.ui.theme.Navy0
+          import com.example.seel.ui.theme.Navy1
+          import com.example.seel.ui.theme.Navy2
+
+          @Composable
+          fun GradientBackground(content: @Composable () -> Unit) {
+              Box(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .background(
+                          Brush.verticalGradient(
+                              colors = listOf(Navy0, Navy1, Navy2)
+                          )
+                      )
+              ) {
+                  content()
+              }
+          }
+          EOF
+
+      - name: Create GlassCard.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/components/GlassCard.kt << 'EOF'
+          package com.example.seel.ui.components
+
+          import androidx.compose.foundation.border
+          import androidx.compose.foundation.layout.Box
+          import androidx.compose.foundation.layout.BoxScope
+          import androidx.compose.foundation.layout.fillMaxWidth
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.runtime.Composable
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.draw.drawBehind
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.unit.Dp
+          import androidx.compose.ui.unit.dp
+          import com.example.seel.ui.theme.GlassBorder
+          import com.example.seel.ui.theme.GlassWhite
+
+          @Composable
+          fun GlassCard(
+              modifier: Modifier = Modifier,
+              cornerRadius: Dp = 20.dp,
+              content: @Composable BoxScope.() -> Unit
+          ) {
+              val shape = RoundedCornerShape(cornerRadius)
+              Box(
+                  modifier = modifier
+                      .clip(shape)
+                      .drawBehind {
+                          drawRect(color = GlassWhite)
+                      }
+                      .border(
+                          width = 1.dp,
+                          color = GlassBorder,
+                          shape = shape
+                      )
+                      .padding(16.dp),
+                  content = content
+              )
+          }
+          EOF
+
+      - name: Create SettingsRepository.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/data/SettingsRepository.kt << 'EOF'
+          package com.example.seel.data
+
+          import android.content.Context
+          import androidx.datastore.core.DataStore
+          import androidx.datastore.preferences.core.Preferences
+          import androidx.datastore.preferences.core.booleanPreferencesKey
+          import androidx.datastore.preferences.core.edit
+          import androidx.datastore.preferences.preferencesDataStore
+          import kotlinx.coroutines.flow.Flow
+          import kotlinx.coroutines.flow.map
+
+          private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "seel_settings")
+
+          class SettingsRepository(private val context: Context) {
+
+              companion object {
+                  val EMBED_METADATA = booleanPreferencesKey("embed_metadata")
+                  val HIGH_QUALITY_AUDIO = booleanPreferencesKey("high_quality_audio")
+              }
+
+              val embedMetadata: Flow<Boolean> = context.dataStore.data
+                  .map { prefs -> prefs[EMBED_METADATA] ?: true }
+
+              val highQualityAudio: Flow<Boolean> = context.dataStore.data
+                  .map { prefs -> prefs[HIGH_QUALITY_AUDIO] ?: false }
+
+              suspend fun setEmbedMetadata(value: Boolean) {
+                  context.dataStore.edit { it[EMBED_METADATA] = value }
+              }
+
+              suspend fun setHighQualityAudio(value: Boolean) {
+                  context.dataStore.edit { it[HIGH_QUALITY_AUDIO] = value }
+              }
+          }
+          EOF
+
+      - name: Create DownloaderViewModel.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/viewmodel/DownloaderViewModel.kt << 'EOF'
+          package com.example.seel.viewmodel
+
+          import android.app.Application
+          import android.media.MediaScannerConnection
+          import android.os.Environment
+          import android.util.Log
+          import androidx.lifecycle.AndroidViewModel
+          import androidx.lifecycle.viewModelScope
+          import com.example.seel.data.SettingsRepository
+          import com.yausername.youtubedl_android.YoutubeDL
+          import com.yausername.youtubedl_android.YoutubeDLRequest
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.StateFlow
+          import kotlinx.coroutines.flow.first
+          import kotlinx.coroutines.launch
+          import java.io.File
+
+          sealed class DownloadState {
+              object Idle : DownloadState()
+              data class Downloading(val progress: Float, val line: String) : DownloadState()
+              data class Success(val filePath: String) : DownloadState()
+              data class Error(val message: String) : DownloadState()
+          }
+
+          class DownloaderViewModel(application: Application) : AndroidViewModel(application) {
+
+              private val settings = SettingsRepository(application)
+              private val _state = MutableStateFlow<DownloadState>(DownloadState.Idle)
+              val state: StateFlow<DownloadState> = _state
+
+              init {
+                  updateEngine()
+              }
+
+              private fun updateEngine() {
+                  viewModelScope.launch(Dispatchers.IO) {
+                      try {
+                          val result = YoutubeDL.getInstance()
+                              .updateYoutubeDL(getApplication(), YoutubeDL.UpdateChannel.NIGHTLY)
+                          Log.d("Seel", "Engine update: $result")
+                      } catch (e: Exception) {
+                          Log.w("Seel", "Engine update skipped: ${e.message}")
+                      }
+                  }
+              }
+
+              fun download(url: String) {
+                  if (url.isBlank()) {
+                      _state.value = DownloadState.Error("Please enter a valid URL")
+                      return
+                  }
+                  viewModelScope.launch(Dispatchers.IO) {
+                      _state.value = DownloadState.Downloading(0f, "Preparing...")
+                      try {
+                          val embedMeta = settings.embedMetadata.first()
+                          val highQuality = settings.highQualityAudio.first()
+
+                          val downloadDir = File(
+                              Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),
+                              "Seel"
+                          ).also { it.mkdirs() }
+
+                          val request = YoutubeDLRequest(url).apply {
+                              addOption("--no-warnings")
+                              addOption("-o", "${downloadDir.absolutePath}/%(title)s.%(ext)s")
+                              if (embedMeta) {
+                                  addOption("--embed-metadata")
+                                  addOption("--embed-thumbnail")
+                              }
+                              if (highQuality) {
+                                  addOption("-f", "bestaudio")
+                                  addOption("--audio-quality", "0")
+                                  addOption("-x")
+                                  addOption("--audio-format", "mp3")
+                                  addOption("--postprocessor-args", "-ar 44100")
+                              } else {
+                                  addOption("-f", "bestaudio/best")
+                                  addOption("-x")
+                                  addOption("--audio-format", "m4a")
+                              }
+                          }
+
+                          var lastFilePath = ""
+                          YoutubeDL.getInstance().execute(request) { progress, _, line ->
+                              _state.value = DownloadState.Downloading(progress / 100f, line ?: "")
+                              if (line != null && line.contains("[download] Destination:")) {
+                                  lastFilePath = line.substringAfter("[download] Destination:").trim()
+                              }
+                          }
+
+                          if (lastFilePath.isNotEmpty()) {
+                              MediaScannerConnection.scanFile(
+                                  getApplication(),
+                                  arrayOf(lastFilePath),
+                                  null,
+                                  null
+                              )
+                          }
+
+                          _state.value = DownloadState.Success(lastFilePath)
+
+                      } catch (e: Exception) {
+                          Log.e("Seel", "Download error: ${e.message}", e)
+                          _state.value = DownloadState.Error(e.message ?: "Unknown error occurred")
+                      }
+                  }
+              }
+
+              fun reset() {
+                  _state.value = DownloadState.Idle
+              }
+          }
+          EOF
+
+      - name: Create SettingsViewModel.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/viewmodel/SettingsViewModel.kt << 'EOF'
+          package com.example.seel.viewmodel
+
+          import android.app.Application
+          import androidx.lifecycle.AndroidViewModel
+          import androidx.lifecycle.viewModelScope
+          import com.example.seel.data.SettingsRepository
+          import kotlinx.coroutines.flow.SharingStarted
+          import kotlinx.coroutines.flow.stateIn
+          import kotlinx.coroutines.launch
+
+          class SettingsViewModel(application: Application) : AndroidViewModel(application) {
+
+              private val repo = SettingsRepository(application)
+
+              val embedMetadata = repo.embedMetadata.stateIn(
+                  scope = viewModelScope,
+                  started = SharingStarted.WhileSubscribed(5000),
+                  initialValue = true
+              )
+
+              val highQualityAudio = repo.highQualityAudio.stateIn(
+                  scope = viewModelScope,
+                  started = SharingStarted.WhileSubscribed(5000),
+                  initialValue = false
+              )
+
+              fun setEmbedMetadata(value: Boolean) {
+                  viewModelScope.launch { repo.setEmbedMetadata(value) }
+              }
+
+              fun setHighQualityAudio(value: Boolean) {
+                  viewModelScope.launch { repo.setHighQualityAudio(value) }
+              }
+          }
+          EOF
+
+      - name: Create OcrViewModel.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/viewmodel/OcrViewModel.kt << 'EOF'
+          package com.example.seel.viewmodel
+
+          import android.app.Application
+          import android.net.Uri
+          import androidx.lifecycle.AndroidViewModel
+          import androidx.lifecycle.viewModelScope
+          import com.google.mlkit.vision.common.InputImage
+          import com.google.mlkit.vision.text.TextRecognition
+          import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.flow.MutableStateFlow
+          import kotlinx.coroutines.flow.StateFlow
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.tasks.await
+
+          sealed class OcrState {
+              object Idle : OcrState()
+              object Processing : OcrState()
+              data class Result(val text: String) : OcrState()
+              data class Error(val message: String) : OcrState()
+          }
+
+          class OcrViewModel(application: Application) : AndroidViewModel(application) {
+
+              private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+              private val _selectedImageUri = MutableStateFlow<Uri?>(null)
+              val selectedImageUri: StateFlow<Uri?> = _selectedImageUri
+
+              private val _ocrState = MutableStateFlow<OcrState>(OcrState.Idle)
+              val ocrState: StateFlow<OcrState> = _ocrState
+
+              fun onImageSelected(uri: Uri) {
+                  _selectedImageUri.value = uri
+                  _ocrState.value = OcrState.Idle
+              }
+
+              fun extractText() {
+                  val uri = _selectedImageUri.value ?: run {
+                      _ocrState.value = OcrState.Error("No image selected")
+                      return
+                  }
+                  viewModelScope.launch(Dispatchers.IO) {
+                      _ocrState.value = OcrState.Processing
+                      try {
+                          val image = InputImage.fromFilePath(getApplication(), uri)
+                          val result = recognizer.process(image).await()
+                          val extracted = result.text
+                          _ocrState.value = if (extracted.isNotBlank()) {
+                              OcrState.Result(extracted)
+                          } else {
+                              OcrState.Result("No text found in this image.")
+                          }
+                      } catch (e: Exception) {
+                          _ocrState.value = OcrState.Error(e.message ?: "OCR failed")
+                      }
+                  }
+              }
+
+              fun reset() {
+                  _selectedImageUri.value = null
+                  _ocrState.value = OcrState.Idle
+              }
+
+              override fun onCleared() {
+                  super.onCleared()
+                  recognizer.close()
+              }
+          }
+          EOF
+
+      - name: Create DashboardScreen.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/screens/DashboardScreen.kt << 'EOF'
+          package com.example.seel.ui.screens
+
+          import androidx.compose.animation.core.tween
+          import androidx.compose.animation.core.animateFloatAsState
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.grid.GridCells
+          import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+          import androidx.compose.foundation.lazy.grid.itemsIndexed
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.Download
+          import androidx.compose.material.icons.filled.TextSnippet
+          import androidx.compose.material3.Icon
+          import androidx.compose.material3.Text
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.alpha
+          import androidx.compose.ui.draw.scale
+          import androidx.compose.ui.graphics.vector.ImageVector
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import com.example.seel.ui.components.GlassCard
+          import com.example.seel.ui.theme.AccentBlue
+          import com.example.seel.ui.theme.AccentTeal
+          import com.example.seel.ui.theme.TextPrimary
+          import com.example.seel.ui.theme.TextSecondary
+
+          data class ToolItem(
+              val title: String,
+              val description: String,
+              val icon: ImageVector,
+              val route: String
+          )
+
+          @Composable
+          fun DashboardScreen(onNavigateTo: (String) -> Unit) {
+              val tools = listOf(
+                  ToolItem("Media Downloader", "Download audio & video from the web", Icons.Filled.Download, "downloader"),
+                  ToolItem("Text Extractor", "Extract text from images via OCR", Icons.Filled.TextSnippet, "ocr")
+              )
+
+              Column(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .padding(horizontal = 16.dp)
+              ) {
+                  Spacer(modifier = Modifier.height(56.dp))
+
+                  Text(
+                      text = "مرحباً بك في صندوق أدواتك",
+                      color = TextPrimary,
+                      fontSize = 22.sp,
+                      fontWeight = FontWeight.Bold,
+                      textAlign = TextAlign.Center,
+                      modifier = Modifier.fillMaxWidth()
+                  )
+                  Text(
+                      text = "Your Toolbox",
+                      color = TextSecondary,
+                      fontSize = 14.sp,
+                      textAlign = TextAlign.Center,
+                      modifier = Modifier
+                          .fillMaxWidth()
+                          .padding(top = 4.dp, bottom = 24.dp)
+                  )
+
+                  LazyVerticalGrid(
+                      columns = GridCells.Fixed(2),
+                      horizontalArrangement = Arrangement.spacedBy(12.dp),
+                      verticalArrangement = Arrangement.spacedBy(12.dp)
+                  ) {
+                      itemsIndexed(tools) { index, tool ->
+                          AnimatedToolCard(
+                              tool = tool,
+                              animDelay = index * 80,
+                              onClick = { onNavigateTo(tool.route) }
+                          )
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun AnimatedToolCard(tool: ToolItem, animDelay: Int, onClick: () -> Unit) {
+              var visible by remember { mutableStateOf(false) }
+
+              LaunchedEffect(Unit) {
+                  kotlinx.coroutines.delay(animDelay.toLong())
+                  visible = true
+              }
+
+              val alpha by animateFloatAsState(
+                  targetValue = if (visible) 1f else 0f,
+                  animationSpec = tween(durationMillis = 400),
+                  label = "card_alpha"
+              )
+              val offsetY by animateFloatAsState(
+                  targetValue = if (visible) 0f else 30f,
+                  animationSpec = tween(durationMillis = 400),
+                  label = "card_offsetY"
+              )
+
+              GlassCard(
+                  modifier = Modifier
+                      .fillMaxWidth()
+                      .aspectRatio(0.9f)
+                      .alpha(alpha)
+                      .offset(y = offsetY.dp)
+                      .clickable(onClick = onClick)
+              ) {
+                  Column(
+                      modifier = Modifier.fillMaxSize(),
+                      horizontalAlignment = Alignment.CenterHorizontally,
+                      verticalArrangement = Arrangement.Center
+                  ) {
+                      val iconColor = if (tool.icon == Icons.Filled.Download) AccentBlue else AccentTeal
+                      Icon(
+                          imageVector = tool.icon,
+                          contentDescription = tool.title,
+                          tint = iconColor,
+                          modifier = Modifier.size(42.dp)
+                      )
+                      Spacer(modifier = Modifier.height(10.dp))
+                      Text(
+                          text = tool.title,
+                          color = TextPrimary,
+                          fontSize = 13.sp,
+                          fontWeight = FontWeight.SemiBold,
+                          textAlign = TextAlign.Center
+                      )
+                      Spacer(modifier = Modifier.height(4.dp))
+                      Text(
+                          text = tool.description,
+                          color = TextSecondary,
+                          fontSize = 10.sp,
+                          textAlign = TextAlign.Center,
+                          lineHeight = 14.sp
+                      )
+                  }
+              }
+          }
+          EOF
+
+      - name: Create DownloaderScreen.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/screens/DownloaderScreen.kt << 'EOF'
+          package com.example.seel.ui.screens
+
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.KeyboardActions
+          import androidx.compose.foundation.text.KeyboardOptions
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.ArrowBack
+          import androidx.compose.material.icons.filled.Download
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.input.ImeAction
+          import androidx.compose.ui.text.input.KeyboardType
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.lifecycle.compose.collectAsStateWithLifecycle
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import com.example.seel.ui.components.GlassCard
+          import com.example.seel.ui.theme.AccentBlue
+          import com.example.seel.ui.theme.GlassBorder
+          import com.example.seel.ui.theme.TextPrimary
+          import com.example.seel.ui.theme.TextSecondary
+          import com.example.seel.viewmodel.DownloadState
+          import com.example.seel.viewmodel.DownloaderViewModel
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun DownloaderScreen(onBack: () -> Unit, vm: DownloaderViewModel = viewModel()) {
+              val state by vm.state.collectAsStateWithLifecycle()
+              var url by remember { mutableStateOf("") }
+              val keyboard = LocalSoftwareKeyboardController.current
+
+              Column(modifier = Modifier.fillMaxSize()) {
+                  TopAppBar(
+                      title = {
+                          Text("Media Downloader", color = TextPrimary, fontWeight = FontWeight.Bold)
+                      },
+                      navigationIcon = {
+                          IconButton(onClick = onBack) {
+                              Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                          }
+                      },
+                      colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                  )
+
+                  Column(
+                      modifier = Modifier
+                          .fillMaxSize()
+                          .padding(16.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Spacer(Modifier.height(16.dp))
+
+                      GlassCard(modifier = Modifier.fillMaxWidth()) {
+                          Column {
+                              Text("Paste URL", color = TextSecondary, fontSize = 12.sp)
+                              Spacer(Modifier.height(8.dp))
+                              OutlinedTextField(
+                                  value = url,
+                                  onValueChange = { url = it },
+                                  placeholder = { Text("https://youtube.com/...", color = TextSecondary, fontSize = 13.sp) },
+                                  modifier = Modifier.fillMaxWidth(),
+                                  colors = OutlinedTextFieldDefaults.colors(
+                                      focusedTextColor = TextPrimary,
+                                      unfocusedTextColor = TextPrimary,
+                                      focusedBorderColor = AccentBlue,
+                                      unfocusedBorderColor = GlassBorder,
+                                      cursorColor = AccentBlue
+                                  ),
+                                  shape = RoundedCornerShape(12.dp),
+                                  keyboardOptions = KeyboardOptions(
+                                      keyboardType = KeyboardType.Uri,
+                                      imeAction = ImeAction.Go
+                                  ),
+                                  keyboardActions = KeyboardActions(
+                                      onGo = {
+                                          keyboard?.hide()
+                                          vm.download(url)
+                                      }
+                                  ),
+                                  singleLine = true
+                              )
+                          }
+                      }
+
+                      Spacer(Modifier.height(20.dp))
+
+                      val isDownloading = state is DownloadState.Downloading
+
+                      Button(
+                          onClick = {
+                              keyboard?.hide()
+                              if (isDownloading) return@Button
+                              vm.download(url)
+                          },
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .height(52.dp),
+                          shape = RoundedCornerShape(14.dp),
+                          colors = ButtonDefaults.buttonColors(containerColor = AccentBlue),
+                          enabled = !isDownloading
+                      ) {
+                          Icon(Icons.Filled.Download, contentDescription = null, tint = Color.White)
+                          Spacer(Modifier.width(8.dp))
+                          Text(
+                              text = if (isDownloading) "Downloading..." else "Download",
+                              color = Color.White,
+                              fontWeight = FontWeight.Bold
+                          )
+                      }
+
+                      Spacer(Modifier.height(24.dp))
+
+                      when (val s = state) {
+                          is DownloadState.Downloading -> {
+                              GlassCard(modifier = Modifier.fillMaxWidth()) {
+                                  Column {
+                                      Text("Downloading...", color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                                      Spacer(Modifier.height(8.dp))
+                                      LinearProgressIndicator(
+                                          progress = { s.progress },
+                                          modifier = Modifier.fillMaxWidth(),
+                                          color = AccentBlue,
+                                          trackColor = GlassBorder
+                                      )
+                                      Spacer(Modifier.height(6.dp))
+                                      Text(
+                                          text = s.line.take(80),
+                                          color = TextSecondary,
+                                          fontSize = 11.sp
+                                      )
+                                  }
+                              }
+                          }
+                          is DownloadState.Success -> {
+                              GlassCard(modifier = Modifier.fillMaxWidth()) {
+                                  Column {
+                                      Text("Download complete!", color = Color(0xFF81C784), fontWeight = FontWeight.Bold)
+                                      Spacer(Modifier.height(4.dp))
+                                      Text(s.filePath.substringAfterLast("/"), color = TextSecondary, fontSize = 12.sp)
+                                      Spacer(Modifier.height(8.dp))
+                                      TextButton(onClick = { vm.reset(); url = "" }) {
+                                          Text("Download another", color = AccentBlue)
+                                      }
+                                  }
+                              }
+                          }
+                          is DownloadState.Error -> {
+                              GlassCard(modifier = Modifier.fillMaxWidth()) {
+                                  Column {
+                                      Text("Error", color = Color(0xFFEF9A9A), fontWeight = FontWeight.Bold)
+                                      Spacer(Modifier.height(4.dp))
+                                      Text(s.message, color = TextSecondary, fontSize = 12.sp)
+                                      Spacer(Modifier.height(8.dp))
+                                      TextButton(onClick = { vm.reset() }) {
+                                          Text("Try again", color = AccentBlue)
+                                      }
+                                  }
+                              }
+                          }
+                          else -> {}
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Create OcrScreen.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/screens/OcrScreen.kt << 'EOF'
+          package com.example.seel.ui.screens
+
+          import android.net.Uri
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.border
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.ArrowBack
+          import androidx.compose.material.icons.filled.Image
+          import androidx.compose.material.icons.filled.TextSnippet
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.layout.ContentScale
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.lifecycle.compose.collectAsStateWithLifecycle
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import coil.compose.AsyncImage
+          import com.example.seel.ui.components.GlassCard
+          import com.example.seel.ui.theme.AccentTeal
+          import com.example.seel.ui.theme.GlassBorder
+          import com.example.seel.ui.theme.TextPrimary
+          import com.example.seel.ui.theme.TextSecondary
+          import com.example.seel.viewmodel.OcrState
+          import com.example.seel.viewmodel.OcrViewModel
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun OcrScreen(onBack: () -> Unit, vm: OcrViewModel = viewModel()) {
+              val imageUri by vm.selectedImageUri.collectAsStateWithLifecycle()
+              val ocrState by vm.ocrState.collectAsStateWithLifecycle()
+
+              val galleryLauncher = rememberLauncherForActivityResult(
+                  ActivityResultContracts.GetContent()
+              ) { uri: Uri? -> uri?.let { vm.onImageSelected(it) } }
+
+              Column(modifier = Modifier.fillMaxSize()) {
+                  TopAppBar(
+                      title = { Text("Text Extractor (OCR)", color = TextPrimary, fontWeight = FontWeight.Bold) },
+                      navigationIcon = {
+                          IconButton(onClick = onBack) {
+                              Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                          }
+                      },
+                      colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                  )
+
+                  Column(
+                      modifier = Modifier
+                          .fillMaxSize()
+                          .padding(16.dp)
+                          .verticalScroll(rememberScrollState()),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Spacer(Modifier.height(8.dp))
+
+                      // Image placeholder / preview
+                      GlassCard(
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .height(220.dp)
+                      ) {
+                          Box(
+                              modifier = Modifier.fillMaxSize(),
+                              contentAlignment = Alignment.Center
+                          ) {
+                              if (imageUri != null) {
+                                  AsyncImage(
+                                      model = imageUri,
+                                      contentDescription = "Selected image",
+                                      contentScale = ContentScale.Fit,
+                                      modifier = Modifier.fillMaxSize()
+                                  )
+                              } else {
+                                  Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                      Icon(
+                                          Icons.Filled.Image,
+                                          contentDescription = null,
+                                          tint = TextSecondary,
+                                          modifier = Modifier.size(56.dp)
+                                      )
+                                      Spacer(Modifier.height(8.dp))
+                                      Text("No image selected", color = TextSecondary, fontSize = 14.sp)
+                                  }
+                              }
+                          }
+                      }
+
+                      Spacer(Modifier.height(16.dp))
+
+                      // Pick image button
+                      OutlinedButton(
+                          onClick = { galleryLauncher.launch("image/*") },
+                          modifier = Modifier.fillMaxWidth().height(50.dp),
+                          shape = RoundedCornerShape(14.dp),
+                          colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
+                          border = androidx.compose.foundation.BorderStroke(1.dp, AccentTeal)
+                      ) {
+                          Icon(Icons.Filled.Image, contentDescription = null, tint = AccentTeal)
+                          Spacer(Modifier.width(8.dp))
+                          Text("Pick Image / Open Camera", fontWeight = FontWeight.SemiBold)
+                      }
+
+                      Spacer(Modifier.height(12.dp))
+
+                      // Extract text button
+                      Button(
+                          onClick = { vm.extractText() },
+                          modifier = Modifier.fillMaxWidth().height(50.dp),
+                          shape = RoundedCornerShape(14.dp),
+                          colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                          enabled = imageUri != null && ocrState !is OcrState.Processing
+                      ) {
+                          Icon(Icons.Filled.TextSnippet, contentDescription = null, tint = Color.White)
+                          Spacer(Modifier.width(8.dp))
+                          Text(
+                              text = if (ocrState is OcrState.Processing) "Extracting..." else "Extract Text",
+                              color = Color.White,
+                              fontWeight = FontWeight.Bold
+                          )
+                      }
+
+                      Spacer(Modifier.height(20.dp))
+
+                      // Result area
+                      GlassCard(
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .defaultMinSize(minHeight = 120.dp)
+                      ) {
+                          when (val s = ocrState) {
+                              is OcrState.Idle -> {
+                                  Text(
+                                      "Extracted text will appear here...",
+                                      color = TextSecondary,
+                                      fontSize = 13.sp
+                                  )
+                              }
+                              is OcrState.Processing -> {
+                                  Row(verticalAlignment = Alignment.CenterVertically) {
+                                      CircularProgressIndicator(
+                                          modifier = Modifier.size(20.dp),
+                                          color = AccentTeal,
+                                          strokeWidth = 2.dp
+                                      )
+                                      Spacer(Modifier.width(10.dp))
+                                      Text("Processing image...", color = TextSecondary)
+                                  }
+                              }
+                              is OcrState.Result -> {
+                                  Column {
+                                      Text("Extracted Text", color = AccentTeal, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                      Spacer(Modifier.height(8.dp))
+                                      SelectionContainer {
+                                          Text(s.text, color = TextPrimary, fontSize = 13.sp, lineHeight = 20.sp)
+                                      }
+                                  }
+                              }
+                              is OcrState.Error -> {
+                                  Text(s.message, color = Color(0xFFEF9A9A))
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Create SettingsScreen.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/screens/SettingsScreen.kt << 'EOF'
+          package com.example.seel.ui.screens
+
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.Album
+          import androidx.compose.material.icons.filled.GraphicEq
+          import androidx.compose.material.icons.filled.Info
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.graphics.vector.ImageVector
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.lifecycle.compose.collectAsStateWithLifecycle
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import com.example.seel.ui.components.GlassCard
+          import com.example.seel.ui.theme.AccentBlue
+          import com.example.seel.ui.theme.GlassBorder
+          import com.example.seel.ui.theme.TextPrimary
+          import com.example.seel.ui.theme.TextSecondary
+          import com.example.seel.viewmodel.SettingsViewModel
+
+          @Composable
+          fun SettingsScreen(vm: SettingsViewModel = viewModel()) {
+              val embedMetadata by vm.embedMetadata.collectAsStateWithLifecycle()
+              val highQuality by vm.highQualityAudio.collectAsStateWithLifecycle()
+
+              Column(
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .padding(horizontal = 16.dp)
+              ) {
+                  Spacer(Modifier.height(56.dp))
+
+                  Text(
+                      "Settings",
+                      color = TextPrimary,
+                      fontSize = 26.sp,
+                      fontWeight = FontWeight.Bold
+                  )
+
+                  Spacer(Modifier.height(24.dp))
+
+                  // Media Section
+                  SectionHeader(title = "Media")
+                  Spacer(Modifier.height(10.dp))
+
+                  GlassCard(modifier = Modifier.fillMaxWidth()) {
+                      Column {
+                          SettingsSwitchRow(
+                              icon = Icons.Filled.Album,
+                              title = "Embed Metadata & Art",
+                              subtitle = "Embed title, artist & thumbnail into downloaded files",
+                              checked = embedMetadata,
+                              onCheckedChange = { vm.setEmbedMetadata(it) }
+                          )
+                          HorizontalDivider(
+                              modifier = Modifier.padding(vertical = 8.dp),
+                              color = GlassBorder,
+                              thickness = 0.5.dp
+                          )
+                          SettingsSwitchRow(
+                              icon = Icons.Filled.GraphicEq,
+                              title = "High Quality Audio (320kbps)",
+                              subtitle = "Download as MP3 at highest bitrate (larger file size)",
+                              checked = highQuality,
+                              onCheckedChange = { vm.setHighQualityAudio(it) }
+                          )
+                      }
+                  }
+
+                  Spacer(Modifier.height(24.dp))
+
+                  // About Section
+                  SectionHeader(title = "About")
+                  Spacer(Modifier.height(10.dp))
+
+                  GlassCard(modifier = Modifier.fillMaxWidth()) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          Icon(
+                              Icons.Filled.Info,
+                              contentDescription = null,
+                              tint = AccentBlue,
+                              modifier = Modifier.size(22.dp)
+                          )
+                          Spacer(Modifier.width(12.dp))
+                          Column {
+                              Text("seel", color = TextPrimary, fontWeight = FontWeight.Bold)
+                              Text("Version 1.0.0 · Your personal toolbox", color = TextSecondary, fontSize = 12.sp)
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          private fun SectionHeader(title: String) {
+              Text(
+                  text = title.uppercase(),
+                  color = AccentBlue,
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.Bold,
+                  letterSpacing = 1.5.sp
+              )
+          }
+
+          @Composable
+          private fun SettingsSwitchRow(
+              icon: ImageVector,
+              title: String,
+              subtitle: String,
+              checked: Boolean,
+              onCheckedChange: (Boolean) -> Unit
+          ) {
+              Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically
+              ) {
+                  Icon(
+                      icon,
+                      contentDescription = null,
+                      tint = AccentBlue,
+                      modifier = Modifier.size(20.dp)
+                  )
+                  Spacer(Modifier.width(12.dp))
+                  Column(modifier = Modifier.weight(1f)) {
+                      Text(title, color = TextPrimary, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                      Text(subtitle, color = TextSecondary, fontSize = 11.sp)
+                  }
+                  Switch(
+                      checked = checked,
+                      onCheckedChange = onCheckedChange,
+                      colors = SwitchDefaults.colors(
+                          checkedThumbColor = Color.White,
+                          checkedTrackColor = AccentBlue,
+                          uncheckedThumbColor = TextSecondary,
+                          uncheckedTrackColor = GlassBorder
+                      )
+                  )
+              }
+          }
+          EOF
+
+      - name: Create MainActivity.kt
+        run: |
+          cat > app/src/main/java/com/example/seel/MainActivity.kt << 'EOF'
+          package com.example.seel
+
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.activity.enableEdgeToEdge
+          import androidx.compose.foundation.layout.Box
+          import androidx.compose.foundation.layout.fillMaxSize
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.GridView
+          import androidx.compose.material.icons.filled.Settings
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.graphics.vector.ImageVector
+          import androidx.navigation.NavDestination.Companion.hierarchy
+          import androidx.navigation.NavGraph.Companion.findStartDestination
+          import androidx.navigation.compose.NavHost
+          import androidx.navigation.compose.composable
+          import androidx.navigation.compose.currentBackStackEntryAsState
+          import androidx.navigation.compose.rememberNavController
+          import com.example.seel.ui.components.GradientBackground
+          import com.example.seel.ui.screens.DashboardScreen
+          import com.example.seel.ui.screens.DownloaderScreen
+          import com.example.seel.ui.screens.OcrScreen
+          import com.example.seel.ui.screens.SettingsScreen
+          import com.example.seel.ui.theme.GlassWhite
+          import com.example.seel.ui.theme.SeelTheme
+          import com.example.seel.ui.theme.TextPrimary
+          import com.example.seel.ui.theme.TextSecondary
+
+          sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
+              object Dashboard : Screen("dashboard", "Dashboard", Icons.Filled.GridView)
+              object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
+          }
+
+          val bottomScreens = listOf(Screen.Dashboard, Screen.Settings)
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  enableEdgeToEdge()
+                  setContent {
+                      SeelTheme {
+                          SeelApp()
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun SeelApp() {
+              val navController = rememberNavController()
+              val navBackStackEntry by navController.currentBackStackEntryAsState()
+              val currentDestination = navBackStackEntry?.destination
+
+              val showBottomBar = currentDestination?.route in bottomScreens.map { it.route }
+
+              GradientBackground {
+                  Scaffold(
+                      containerColor = Color.Transparent,
+                      bottomBar = {
+                          if (showBottomBar) {
+                              NavigationBar(
+                                  containerColor = GlassWhite,
+                                  contentColor = TextPrimary
+                              ) {
+                                  bottomScreens.forEach { screen ->
+                                      val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
+                                      NavigationBarItem(
+                                          icon = {
+                                              Icon(
+                                                  screen.icon,
+                                                  contentDescription = screen.label,
+                                                  tint = if (selected) TextPrimary else TextSecondary
+                                              )
+                                          },
+                                          label = {
+                                              Text(
+                                                  screen.label,
+                                                  color = if (selected) TextPrimary else TextSecondary
+                                              )
+                                          },
+                                          selected = selected,
+                                          onClick = {
+                                              navController.navigate(screen.route) {
+                                                  popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                                  launchSingleTop = true
+                                                  restoreState = true
+                                              }
+                                          },
+                                          colors = NavigationBarItemDefaults.colors(
+                                              indicatorColor = Color(0x33FFFFFF)
+                                          )
+                                      )
+                                  }
+                              }
+                          }
+                      }
+                  ) { innerPadding ->
+                      Box(modifier = Modifier
+                          .fillMaxSize()
+                          .padding(innerPadding)) {
+                          NavHost(
+                              navController = navController,
+                              startDestination = Screen.Dashboard.route,
+                              modifier = Modifier.fillMaxSize()
+                          ) {
+                              composable(Screen.Dashboard.route) {
+                                  DashboardScreen(onNavigateTo = { route ->
+                                      navController.navigate(route)
+                                  })
+                              }
+                              composable(Screen.Settings.route) {
+                                  SettingsScreen()
+                              }
+                              composable("downloader") {
+                                  DownloaderScreen(onBack = { navController.popBackStack() })
+                              }
+                              composable("ocr") {
+                                  OcrScreen(onBack = { navController.popBackStack() })
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      # ─────────────────────────────────────────
+      # 6. FIX OCR SCREEN: remove Coil import
+      #    (not in dependencies — use placeholder)
+      # ─────────────────────────────────────────
+
+      - name: Rewrite OcrScreen without Coil dependency
+        run: |
+          cat > app/src/main/java/com/example/seel/ui/screens/OcrScreen.kt << 'EOF'
+          package com.example.seel.ui.screens
+
+          import android.net.Uri
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.text.selection.SelectionContainer
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.ArrowBack
+          import androidx.compose.material.icons.filled.Image
+          import androidx.compose.material.icons.filled.TextSnippet
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.lifecycle.compose.collectAsStateWithLifecycle
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import com.example.seel.ui.components.GlassCard
+          import com.example.seel.ui.theme.AccentTeal
+          import com.example.seel.ui.theme.GlassBorder
+          import com.example.seel.ui.theme.TextPrimary
+          import com.example.seel.ui.theme.TextSecondary
+          import com.example.seel.viewmodel.OcrState
+          import com.example.seel.viewmodel.OcrViewModel
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun OcrScreen(onBack: () -> Unit, vm: OcrViewModel = viewModel()) {
+              val imageUri by vm.selectedImageUri.collectAsStateWithLifecycle()
+              val ocrState by vm.ocrState.collectAsStateWithLifecycle()
+
+              val galleryLauncher = rememberLauncherForActivityResult(
+                  ActivityResultContracts.GetContent()
+              ) { uri: Uri? -> uri?.let { vm.onImageSelected(it) } }
+
+              Column(modifier = Modifier.fillMaxSize()) {
+                  TopAppBar(
+                      title = { Text("Text Extractor (OCR)", color = TextPrimary, fontWeight = FontWeight.Bold) },
+                      navigationIcon = {
+                          IconButton(onClick = onBack) {
+                              Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                          }
+                      },
+                      colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                  )
+
+                  Column(
+                      modifier = Modifier
+                          .fillMaxSize()
+                          .padding(16.dp)
+                          .verticalScroll(rememberScrollState()),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Spacer(Modifier.height(8.dp))
+
+                      GlassCard(
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .height(180.dp)
+                      ) {
+                          Box(
+                              modifier = Modifier.fillMaxSize(),
+                              contentAlignment = Alignment.Center
+                          ) {
+                              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                  Icon(
+                                      Icons.Filled.Image,
+                                      contentDescription = null,
+                                      tint = if (imageUri != null) AccentTeal else TextSecondary,
+                                      modifier = Modifier.size(52.dp)
+                                  )
+                                  Spacer(Modifier.height(8.dp))
+                                  Text(
+                                      text = if (imageUri != null)
+                                          imageUri.toString().substringAfterLast("/").take(40)
+                                      else
+                                          "No image selected",
+                                      color = if (imageUri != null) TextPrimary else TextSecondary,
+                                      fontSize = 12.sp
+                                  )
+                              }
+                          }
+                      }
+
+                      Spacer(Modifier.height(16.dp))
+
+                      OutlinedButton(
+                          onClick = { galleryLauncher.launch("image/*") },
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .height(50.dp),
+                          shape = RoundedCornerShape(14.dp),
+                          colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentTeal),
+                          border = androidx.compose.foundation.BorderStroke(1.dp, AccentTeal)
+                      ) {
+                          Icon(Icons.Filled.Image, contentDescription = null, tint = AccentTeal)
+                          Spacer(Modifier.width(8.dp))
+                          Text("Pick Image / Open Camera", fontWeight = FontWeight.SemiBold)
+                      }
+
+                      Spacer(Modifier.height(12.dp))
+
+                      Button(
+                          onClick = { vm.extractText() },
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .height(50.dp),
+                          shape = RoundedCornerShape(14.dp),
+                          colors = ButtonDefaults.buttonColors(containerColor = AccentTeal),
+                          enabled = imageUri != null && ocrState !is OcrState.Processing
+                      ) {
+                          Icon(Icons.Filled.TextSnippet, contentDescription = null, tint = Color.White)
+                          Spacer(Modifier.width(8.dp))
+                          Text(
+                              text = if (ocrState is OcrState.Processing) "Extracting..." else "Extract Text",
+                              color = Color.White,
+                              fontWeight = FontWeight.Bold
+                          )
+                      }
+
+                      Spacer(Modifier.height(20.dp))
+
+                      GlassCard(
+                          modifier = Modifier
+                              .fillMaxWidth()
+                              .defaultMinSize(minHeight = 120.dp)
+                      ) {
+                          when (val s = ocrState) {
+                              is OcrState.Idle -> {
+                                  Text(
+                                      "Extracted text will appear here...",
+                                      color = TextSecondary,
+                                      fontSize = 13.sp
+                                  )
+                              }
+                              is OcrState.Processing -> {
+                                  Row(verticalAlignment = Alignment.CenterVertically) {
+                                      CircularProgressIndicator(
+                                          modifier = Modifier.size(20.dp),
+                                          color = AccentTeal,
+                                          strokeWidth = 2.dp
+                                      )
+                                      Spacer(Modifier.width(10.dp))
+                                      Text("Processing image...", color = TextSecondary)
+                                  }
+                              }
+                              is OcrState.Result -> {
+                                  Column {
+                                      Text(
+                                          "Extracted Text",
+                                          color = AccentTeal,
+                                          fontWeight = FontWeight.Bold,
+                                          fontSize = 13.sp
+                                      )
+                                      Spacer(Modifier.height(8.dp))
+                                      SelectionContainer {
+                                          Text(s.text, color = TextPrimary, fontSize = 13.sp, lineHeight = 20.sp)
+                                      }
+                                  }
+                              }
+                              is OcrState.Error -> {
+                                  Text(s.message, color = Color(0xFFEF9A9A))
+                              }
+                          }
+                      }
+
+                      Spacer(Modifier.height(16.dp))
+                  }
+              }
+          }
+          EOF
+
+      # ─────────────────────────────────────────
+      # 7. TEST STUBS
+      # ─────────────────────────────────────────
+
+      - name: Create test stubs
+        run: |
+          cat > app/src/test/java/com/example/seel/ExampleUnitTest.kt << 'EOF'
+          package com.example.seel
+
+          import org.junit.Test
+          import org.junit.Assert.*
+
+          class ExampleUnitTest {
+              @Test
+              fun addition_isCorrect() {
+                  assertEquals(4, 2 + 2)
+              }
+          }
+          EOF
+
+          cat > app/src/androidTest/java/com/example/seel/ExampleInstrumentedTest.kt << 'EOF'
+          package com.example.seel
+
+          import androidx.test.ext.junit.runners.AndroidJUnit4
+          import androidx.test.platform.app.InstrumentationRegistry
+          import org.junit.Assert.assertEquals
+          import org.junit.Test
+          import org.junit.runner.RunWith
+
+          @RunWith(AndroidJUnit4::class)
+          class ExampleInstrumentedTest {
+              @Test
+              fun useAppContext() {
+                  val appContext = InstrumentationRegistry.getInstrumentation().targetContext
+                  assertEquals("com.example.seel", appContext.packageName)
+              }
+          }
+          EOF
+
+      # ─────────────────────────────────────────
+      # 8. BUILD
+      # ─────────────────────────────────────────
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Xmx4g"
+
+      # ─────────────────────────────────────────
+      # 9. UPLOAD ARTIFACT
+      # ─────────────────────────────────────────
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: seel-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
