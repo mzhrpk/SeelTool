@@ -1665,7 +1665,7 @@ jobs:
                                               }
                                           },
                                           colors = NavigationBarItemDefaults.colors(
-                                              selectedIndicatorColor = Color(0x33FFFFFF)
+                                              indicatorColor = Color(0x33FFFFFF)
                                           )
                                       )
                                   }
